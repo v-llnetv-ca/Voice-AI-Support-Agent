@@ -344,6 +344,32 @@
     .btn-reset.visible { display: inline; }
     .btn-reset:hover { color: var(--text); }
 
+    #handoff-card {
+      margin-top: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 1.1rem 1.25rem;
+    }
+    #handoff-card.hidden { display: none; }
+    .handoff-head {
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+    .handoff-body {
+      display: grid;
+      grid-template-columns: 130px 1fr;
+      gap: 0.45rem 1rem;
+      margin: 0;
+    }
+    .handoff-body dt { font-size: 11px; color: var(--text-muted); }
+    .handoff-body dd { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
+    #ho-priority.high { color: var(--red); font-weight: 600; }
+
     @keyframes fadeIn { to { opacity: 1; } }
 
     @keyframes pulse-dot {
@@ -403,6 +429,18 @@
           <div class="audio-dot"></div>
           River · ElevenLabs
         </div>
+      </div>
+      <div id="handoff-card" class="hidden">
+        <div class="handoff-head">Handed to support</div>
+        <dl class="handoff-body">
+          <dt>Issue</dt><dd id="ho-issue"></dd>
+          <dt>Category</dt><dd id="ho-category"></dd>
+          <dt>User is</dt><dd id="ho-perspective"></dd>
+          <dt>Evidence they have</dt><dd id="ho-evidence"></dd>
+          <dt>Why escalated</dt><dd id="ho-reason"></dd>
+          <dt>Priority</dt><dd id="ho-priority"></dd>
+          <dt>Suggested opening</dt><dd id="ho-opening"></dd>
+        </dl>
       </div>
       <button class="btn-reset" id="btn-reset" onclick="resetUI()">Start over</button>
     </div>
@@ -609,6 +647,27 @@
           document.getElementById('response-zone').classList.remove('hidden');
           document.getElementById('btn-reset').classList.add('visible');
 
+          // Structured handoff — only present when the agent escalates
+          const ho = document.getElementById('handoff-card');
+          if (data.escalate && data.handoff) {
+            const h = data.handoff;
+            document.getElementById('ho-issue').textContent = h.issue || '—';
+            document.getElementById('ho-category').textContent = (h.category || '').replace(/_/g, ' ');
+            document.getElementById('ho-perspective').textContent = h.perspective || 'unconfirmed';
+            document.getElementById('ho-evidence').textContent =
+              (h.evidence_mentioned && h.evidence_mentioned.length)
+                ? h.evidence_mentioned.join('; ')
+                : 'none stated';
+            document.getElementById('ho-reason').textContent = h.escalation_reason || '—';
+            const pr = document.getElementById('ho-priority');
+            pr.textContent = h.priority || 'normal';
+            pr.className = h.priority === 'high' ? 'high' : '';
+            document.getElementById('ho-opening').textContent = h.suggested_opening || '—';
+            ho.classList.remove('hidden');
+          } else {
+            ho.classList.add('hidden');
+          }
+
           // Fetch and auto-play audio
           try {
             const audioRes = await fetch(`${API}/api/speak`, {
@@ -685,6 +744,7 @@
       document.getElementById('speak-hint').textContent = 'Tap to speak your issue';
       document.getElementById('clarification-zone').classList.remove('visible');
       document.getElementById('response-zone').classList.add('hidden');
+      document.getElementById('handoff-card').classList.add('hidden');
       document.getElementById('btn-reset').classList.remove('visible');
       document.getElementById('audio-playing').classList.remove('visible');
       clearReasoning();

@@ -212,6 +212,65 @@ Spoken response:"""
     return response.content[0].text.strip()
 
 
+def build_handoff(user_message, category, policy_entry, perspective=None):
+    """
+    Builds the structured summary a human support agent picks up when the agent
+    escalates. The point of escalating is not just "a human will look at this" —
+    it is that the human starts warm, with context, rather than from scratch.
+
+    Returns a dict:
+    - issue: one-line plain-English summary of what the user is dealing with
+    - category / perspective: routing context
+    - evidence_mentioned: things the user already said they have (photos, tracking...)
+    - escalation_reason: why the agent did not resolve this itself
+    - priority: high | normal  (safety and authenticity cases jump the queue)
+    - suggested_opening: a first line for the human so the user doesn't repeat themselves
+    """
+    high_priority = category in ("authenticity_claim", "fraud_and_safety")
+
+    prompt = f"""A Depop support query is being escalated to a human agent.
+
+User message:
+"{user_message}"
+
+Category: {category}
+{f"Confirmed perspective: {perspective}" if perspective else ""}
+
+Return ONLY a compact JSON object with exactly these keys:
+- "issue": one sentence, plain English, what the user is dealing with
+- "evidence_mentioned": array of specific evidence or facts the user already stated they
+  have or know (e.g. "photos of the stitching", "no tracking number", "5 days since order").
+  Empty array if none.
+- "suggested_opening": one sentence a human agent could open with to show they already
+  have the context — without restating the whole problem back to the user."""
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        parsed = json.loads(response.content[0].text.strip())
+    except Exception:
+        parsed = {
+            "issue": policy_entry["summary"] if policy_entry else user_message[:160],
+            "evidence_mentioned": [],
+            "suggested_opening": "",
+        }
+
+    return {
+        "issue": parsed.get("issue", ""),
+        "category": category,
+        "perspective": perspective or "unconfirmed",
+        "evidence_mentioned": parsed.get("evidence_mentioned", []),
+        "escalation_reason": (policy_entry or {}).get(
+            "escalation_triggers", ["Ambiguous — requires human review"]
+        )[0],
+        "priority": "high" if high_priority else "normal",
+        "suggested_opening": parsed.get("suggested_opening", ""),
+    }
+
+
 def process_message(user_message, perspective=None):
     """
     Master function that runs the full agent loop for a single message.
@@ -223,6 +282,7 @@ def process_message(user_message, perspective=None):
     - needs_clarification: bool
     - response_text: the spoken response (or clarifying question)
     - reasoning: list of steps the agent took (shown in UI reasoning layer)
+    - handoff: structured summary for the human agent (only when escalate is True)
     """
 
     reasoning = []
@@ -238,14 +298,16 @@ def process_message(user_message, perspective=None):
     escalate = should_escalate(category, policy)
 
     if escalate:
-        reasoning.append("Escalation required — preparing handoff")
+        reasoning.append("Escalation required — preparing handoff for a human agent")
         response_text = generate_escalation(user_message, policy)
+        handoff = build_handoff(user_message, category, policy, perspective)
         return {
             "category": category,
             "escalate": True,
             "needs_clarification": False,
             "response_text": response_text,
-            "reasoning": reasoning
+            "reasoning": reasoning,
+            "handoff": handoff
         }
 
     reasoning.append("Checking if clarification is needed...")
@@ -320,7 +382,8 @@ if __name__ == "__main__":
     result = process_message("I received a Supreme hoodie and I'm pretty sure it's fake. The stitching is completely wrong.")
     for step in result["reasoning"]:
         print(f"  {step}")
-    print(f"Response: {result['response_text']}\n")
+    print(f"Response: {result['response_text']}")
+    print(f"Handoff: {json.dumps(result.get('handoff'), indent=2)}\n")
 
     # Scenario 3 — clarifying question, then resolution
     print("--- Scenario 3 (turn 1) ---")
